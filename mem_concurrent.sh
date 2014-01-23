@@ -1,0 +1,164 @@
+#!/bin/sh
+# Copyright (C) 2014 Freescale Semiconductor, Inc. All Rights Reserved.
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 2 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License along
+# with this program; if not, write to the Free Software Foundation, Inc.,
+# 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+#
+#    @file   cma_concurrent.sh
+#
+#    @brief  shell script template for "cma".
+#
+#Revision History:
+#                            Modification     Tracking
+#Author                          Date          Number    Description of Changes
+#WangHao                         2014/01/14        NA        cma_concurrent test
+#-------------------------   ------------    ----------  ------------------------------------------
+#test method
+#1. run this script by cma_ok.sh $num
+##################################################
+setup()
+{
+    #TODO Total test case
+    export TST_TOTAL=2
+    export TCID="MEMTEST & CMA"
+    export TST_COUNT=0
+    RC=1
+    trap "cleanup" 0
+}
+###################################################
+cleanup()
+{
+    RC=0
+    #TODO add cleanup code here
+if [ $(ls | grep memtest_err.log | wc -l) -eq 1 ];then
+    rm ./memtest_err.log
+fi
+if [ $(lsmod | grep test | wc -l) -eq 1 ];then
+    for C in $(seq 1 $MTEST_COPIES); do
+	      cat /dev/cma_test
+          rm ./memtester_$C.log
+    done
+	rmmod cma_test
+else
+    return $RC
+fi
+}
+##################################################
+usage()
+{
+    echo "$0 [case ID]"
+    echo "1: concurrent memtester and CMA"
+    echo "2: cuncurrent memtest"
+}
+# main function
+RC=0
+export RC
+MTEST_COPIES=5
+#check parameter
+if [ $# -ne 1 ]
+then
+    usage
+    exit 1
+fi
+
+setup || exit $RC
+
+test_case_01()
+{
+    echo "memtester times: $MTEST_COPIES"
+    TCID="CMA_CONCURRENT"
+    RC=1
+    RC_TMP=1
+    #print test info
+    tst_resm TINFO "test $TST_COUNT: $TCID "
+    sleep 1
+	insmod $LTPROOT/testcases/bin/cma_test.ko
+    sleep 1
+    for C in $(seq 1 $MTEST_COPIES); do
+        sleep 1
+        echo 0 > /dev/cma_test
+        sleep 1
+        PHYSADD=$(dmesg |grep "misc cma_test: alloc" | cut -c 45-55|sed -n '$p')
+        sleep 1
+        echo $PHYSADD
+        sleep 1
+        run_memtester $C &
+    done
+    wait
+    if [ $(ls | grep memtest_err.log | wc -l) -eq 1 ];then
+        read RC_TMP < ./memtest_err.log
+    fi
+    echo "RC_TMP=====$RC_TMP"
+    if [ $RC_TMP -eq 1 ];then
+       return 0
+    else
+       return $RC_TMP
+    fi
+}
+
+run_memtester ()
+{
+    memtester -p $PHYSADD 1 1 > ./memtester_$1.log 2>&1 || echo  "10$1" > ./memtest_err.log
+}
+
+run_only_memtest ()
+{
+    for ((i=0;i<6;i++))
+    do
+        memtester 2 1 > /tmp/memtester_2 2>&1 || echo "201" > ./memtest_err.log
+        if [ $(ls | grep memtest_err.log | wc -l) -eq 1 ];then
+            break
+        fi
+        echo "This is the $i times in memtest"
+        sleep $(($RANDOM * 10 / 32768))
+    done
+}
+
+test_case_02()
+{
+    TCID="CONCURRENT_MEMTEST"
+    RC=2
+    RC2_TMP=2
+    #print test info
+    tst_resm TINFO "test $TST_COUNT: $TCID "
+    for ((i=0;i<5;i++))
+    do
+        run_only_memtest &
+    done
+    wait
+    if [ $(ls | grep memtest_err.log | wc -l) -eq 1 ];then
+        killall memtester
+        read RC_TMP < ./memtest_err.log
+    fi
+    echo "RC2_TMP=====$RC2_TMP"
+    if [ $RC2_TMP -eq 2 ];then
+          return 0
+    else
+          return $RC2_TMP
+    fi
+}
+
+case "$1" in
+1)
+  test_case_01 || exit $RC
+  ;;
+2)
+  test_case_02 || exit $RC
+  ;;
+*)
+  usage
+  ;;
+esac
+
+tst_resm TINFO "Test PASS"
